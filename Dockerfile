@@ -12,6 +12,8 @@ RUN apt-get update && apt-get install -y \
     libssl-dev \
     libffi-dev \
     python3-dev \
+    libjpeg-dev \
+    zlib1g-dev \
     pkg-config \
     libcairo2-dev \
     libpango1.0-dev \
