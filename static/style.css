@@ -1,0 +1,196 @@
+:root {
+    --bg-color: #000000;
+    --text-color: #ffffff;
+    --accent-color: #ffffff;
+    --dim-color: #666666;
+    --border-color: #333333;
+    --terminal-bg: #111111;
+    --font-main: 'Space Mono', monospace;
+}
+
+* {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+}
+
+body {
+    background-color: var(--bg-color);
+    color: var(--text-color);
+    font-family: var(--font-main);
+    display: flex;
+    justify-content: center;
+    min-height: 100vh;
+    padding: 40px;
+    overflow-x: hidden;
+}
+
+.container {
+    width: 100%;
+    max-width: 1200px;
+    display: flex;
+    flex-direction: column;
+    gap: 30px;
+}
+
+header {
+    text-align: center;
+    border-bottom: 2px solid var(--accent-color);
+    padding-bottom: 20px;
+    margin-bottom: 20px;
+}
+
+h1 {
+    font-size: 3rem;
+    font-weight: 700;
+    letter-spacing: -2px;
+    text-transform: uppercase;
+}
+
+.subtitle {
+    font-size: 0.9rem;
+    color: var(--dim-color);
+    letter-spacing: 5px;
+    margin-top: 5px;
+}
+
+.cursor {
+    animation: blink 1s infinite;
+}
+
+@keyframes blink {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0; }
+}
+
+.input-section {
+    display: flex;
+    gap: 0;
+    border: 2px solid var(--accent-color);
+    padding: 5px;
+}
+
+input[type="text"] {
+    flex-grow: 1;
+    background: transparent;
+    border: none;
+    outline: none;
+    color: var(--text-color);
+    font-family: var(--font-main);
+    font-size: 1.2rem;
+    padding: 15px;
+    text-transform: uppercase;
+}
+
+input[type="text"]::placeholder {
+    color: var(--dim-color);
+}
+
+button {
+    background-color: var(--accent-color);
+    color: var(--bg-color);
+    border: none;
+    font-family: var(--font-main);
+    font-weight: 700;
+    font-size: 1.1rem;
+    padding: 0 40px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+button:hover {
+    background-color: #ccc;
+}
+
+button:disabled {
+    background-color: var(--dim-color);
+    cursor: not-allowed;
+}
+
+.status-bar {
+    font-size: 0.9rem;
+    border-bottom: 1px dashed var(--dim-color);
+    padding-bottom: 10px;
+}
+
+.dashboard {
+    display: flex;
+    gap: 20px;
+    height: 600px;
+}
+
+.terminal-window, .report-window {
+    flex: 1;
+    border: 1px solid var(--border-color);
+    display: flex;
+    flex-direction: column;
+    background-color: var(--terminal-bg);
+}
+
+.window-header {
+    background-color: var(--border-color);
+    color: var(--text-color);
+    padding: 8px 15px;
+    font-size: 0.8rem;
+    text-transform: uppercase;
+    font-weight: 700;
+}
+
+.terminal-content, .report-content {
+    flex-grow: 1;
+    padding: 15px;
+    overflow-y: auto;
+    font-size: 0.9rem;
+    line-height: 1.5;
+}
+
+.terminal-content {
+    font-family: 'Space Mono', monospace; /* Redundant but safe */
+}
+
+.log-line {
+    display: block;
+    border-bottom: 1px solid #222;
+    padding: 2px 0;
+    word-wrap: break-word;
+}
+
+/* Scrollbar Styling */
+::-webkit-scrollbar {
+    width: 8px;
+}
+::-webkit-scrollbar-track {
+    background: var(--bg-color); 
+}
+::-webkit-scrollbar-thumb {
+    background: var(--dim-color); 
+}
+::-webkit-scrollbar-thumb:hover {
+    background: var(--accent-color); 
+}
+
+/* Markdown Report Styling */
+.report-content h1, .report-content h2, .report-content h3 {
+    margin-top: 20px;
+    margin-bottom: 10px;
+    border-bottom: 1px solid var(--dim-color);
+    padding-bottom: 5px;
+}
+
+.report-content ul {
+    margin-left: 20px;
+    margin-bottom: 15px;
+}
+
+.report-content code {
+    background-color: #222;
+    padding: 2px 5px;
+    border-radius: 3px;
+}
+
+.report-content pre {
+    background-color: #222;
+    padding: 10px;
+    overflow-x: auto;
+    margin-bottom: 15px;
+}

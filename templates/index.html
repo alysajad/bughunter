@@ -1,0 +1,224 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Bug Bounty Hunter Agent</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+    <link href="https://fonts.googleapis.com/css2?family=Space+Mono:ital,wght@0,400;0,700;1,400&display=swap"
+        rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+</head>
+
+<body>
+    <div class="container">
+        <header>
+            <h1>HUNTER<span class="cursor">_</span>AGENT</h1>
+            <p class="subtitle">AUTOMATED VULNERABILITY SCANNER</p>
+        </header>
+
+        <div class="input-section">
+            <input type="text" id="targetInput" placeholder="ENTER TARGET URL..." autocomplete="off">
+            <button id="scanBtn" onclick="startScan()">INITIATE SCAN</button>
+            <button id="bfBtn" onclick="toggleBruteForce()"
+                style="display:none; background-color: #ff3333; margin-left: 10px;">BRUTE FORCE LOGIN</button>
+            <a href="/download-pdf" target="_blank"><button
+                    style="background-color: #4CAF50; margin-left:10px;">DOWNLOAD PDF</button></a>
+        </div>
+
+        <!-- Brute Force Modal (Simple Overlay) -->
+        <div id="bfModal" class="modal" style="display:none;">
+            <div class="modal-content">
+                <span class="close" onclick="toggleBruteForce()">&times;</span>
+                <h2>BRUTE FORCE CONFIG</h2>
+                <input type="text" id="bfTarget" placeholder="Target Login URL">
+                <input type="text" id="bfUser" placeholder="Username (e.g. admin)">
+                <select id="bfWordlist">
+                    <option value="top1000">Top 1000 Passwords</option>
+                    <option value="top10000">Top 10000 Passwords</option>
+                    <option value="phpbb">phpBB Default</option>
+                </select>
+                <button onclick="startBruteForce()">LAUNCH ATTACK</button>
+            </div>
+        </div>
+
+        <div class="status-bar" id="statusBar">
+            STATUS: <span id="statusText">IDLE</span>
+        </div>
+
+        <div class="dashboard">
+            <div class="terminal-window">
+                <div class="window-header">LIVE TERMINAL LOGS</div>
+                <div class="terminal-content" id="terminalOutput">
+                    <span class="log-line">Waiting for target...</span>
+                </div>
+            </div>
+
+            <div class="report-window">
+                <div class="window-header">FINAL REPORT</div>
+                <div class="report-content" id="reportOutput">
+                    <!-- Markdown rendered here -->
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        function startScan() {
+            const target = document.getElementById('targetInput').value;
+            if (!target) {
+                alert("Please enter a target URL");
+                return;
+            }
+
+            const terminal = document.getElementById('terminalOutput');
+            const statusText = document.getElementById('statusText');
+            const btn = document.getElementById('scanBtn');
+            const reportDiv = document.getElementById('reportOutput');
+
+            terminal.innerHTML = '';
+            reportDiv.innerHTML = '<span class="log-line">Report will appear here after scan...</span>';
+            statusText.innerText = "SCANNING...";
+            statusText.style.color = "#0f0"; // Green
+            btn.disabled = true;
+            btn.innerText = "SCANNING...";
+
+            // Use EventSource for SSE (but SSE usually GET strings. We need POST for data)
+            // Native EventSource doesn't support POST. Use fetch + reader.
+
+            const formData = new FormData();
+            formData.append('target', target);
+
+            fetch('/scan', {
+                method: 'POST',
+                body: formData
+            }).then(response => {
+                const reader = response.body.getReader();
+                const decoder = new TextDecoder();
+
+                function read() {
+                    reader.read().then(({ done, value }) => {
+                        if (done) {
+                            console.log('Stream complete');
+                            return;
+                        }
+                        const chunk = decoder.decode(value);
+                        const lines = chunk.split('\n\n');
+
+                        lines.forEach(line => {
+                            if (line.startsWith('data: ')) {
+                                const data = line.replace('data: ', '');
+                                if (data.trim() === '[DONE]') {
+                                    finishScan();
+                                } else {
+                                    // Parse for Login Detection to show BF Button
+                                    if (data.includes("Potential Login Form") || data.includes("Login Forms:")) {
+                                        document.getElementById('bfBtn').style.display = 'inline-block';
+
+                                        // Attempt to extract URL? 
+                                        // Regex look for http... in the line
+                                        const urlMatch = data.match(/http[s]?:\/\/[^\s]+/);
+                                        if (urlMatch) {
+                                            document.getElementById('bfTarget').value = urlMatch[0];
+                                        }
+                                    }
+
+                                    const span = document.createElement('div');
+                                    span.className = 'log-line';
+                                    span.innerText = data;
+                                    terminal.appendChild(span);
+                                    terminal.scrollTop = terminal.scrollHeight;
+                                }
+                            }
+                        });
+                        read();
+                    });
+                }
+                read();
+            }).catch(err => {
+                console.error(err);
+                statusText.innerText = "ERROR";
+                btn.disabled = false;
+                btn.innerText = "INITIATE SCAN";
+            });
+        }
+
+        function toggleBruteForce() {
+            const modal = document.getElementById('bfModal');
+            modal.style.display = modal.style.display === 'block' ? 'none' : 'block';
+        }
+
+        function startBruteForce() {
+            toggleBruteForce(); // Close modal
+            const target = document.getElementById('bfTarget').value;
+            const username = document.getElementById('bfUser').value;
+            const wordlist = document.getElementById('bfWordlist').value;
+
+            if (!target || !username) { alert("Need Target and Username"); return; }
+
+            const terminal = document.getElementById('terminalOutput');
+            const statusText = document.getElementById('statusText');
+
+            terminal.innerHTML += '<div class="log-line" style="color:#ff3333">--- STARTING BRUTE FORCE ---</div>';
+            statusText.innerText = "ATTACKING...";
+            statusText.style.color = "#ff3333";
+
+            const formData = new FormData();
+            formData.append('target', target);
+            formData.append('username', username);
+            formData.append('wordlist', wordlist);
+
+            fetch('/brute', { method: 'POST', body: formData })
+                .then(response => {
+                    const reader = response.body.getReader();
+                    const decoder = new TextDecoder();
+
+                    function read() {
+                        reader.read().then(({ done, value }) => {
+                            if (done) { statusText.innerText = "BF COMPLETE"; return; }
+                            const chunk = decoder.decode(value);
+                            chunk.split('\n\n').forEach(line => {
+                                if (line.startsWith('data: ')) {
+                                    const data = line.replace('data: ', '');
+                                    if (data === '[DONE]') {
+                                        statusText.innerText = "BF COMPLETE";
+                                    } else {
+                                        const span = document.createElement('div');
+                                        span.className = 'log-line';
+                                        span.style.color = '#ff9999';
+                                        span.innerText = data;
+                                        terminal.appendChild(span);
+                                        terminal.scrollTop = terminal.scrollHeight;
+                                    }
+                                }
+                            });
+                            read();
+                        });
+                    }
+                    read();
+                });
+        }
+
+        function finishScan() {
+            const statusText = document.getElementById('statusText');
+            const btn = document.getElementById('scanBtn');
+            const reportDiv = document.getElementById('reportOutput');
+
+            statusText.innerText = "COMPLETED";
+            statusText.style.color = "#fff";
+            btn.disabled = false;
+            btn.innerText = "INITIATE SCAN";
+
+            // Fetch report
+            fetch('/report')
+                .then(res => res.json())
+                .then(data => {
+                    const cleanMarkdown = data.content;
+                    reportDiv.innerHTML = marked.parse(cleanMarkdown);
+                });
+        }
+    </script>
+</body>
+
+</html>
