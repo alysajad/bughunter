@@ -1,5 +1,6 @@
 import sys
 import argparse
+import requests
 from colorama import init, Fore
 from recon.mapper import EndpointMapper
 from recon.auth import AuthDetector
@@ -24,6 +25,10 @@ from discovery.access_control import AccessControlScanner
 from discovery.rce import RCEAgent
 from discovery.cve import CVEAgent
 from discovery.nosqli import NoSQLInjector
+from discovery.csrf import CSRFScanner
+from discovery.ssrf import SSRFScanner
+from discovery.general import GeneralScanner
+from discovery.bruteforce import BruteForcer
 from dotenv import load_dotenv
 import os
 
@@ -42,6 +47,7 @@ def main():
     parser.add_argument("--session-a", help="Cookie/Session for User A (Victim)", required=False)
     parser.add_argument("--session-b", help="Cookie/Session for User B (Attacker)", required=False)
     parser.add_argument("--fuzz", help="Run input fuzzing on target params", action="store_true")
+    parser.add_argument("--brute-force", help="Run password brute-force on login forms", action="store_true")
     parser.add_argument("--scan-all", help="Run ALL available scans (SQLi, XSS, Fuzz, Auth)", action="store_true")
     
     args = parser.parse_args()
@@ -172,15 +178,18 @@ def main():
                  sqli_vulns = sqli_tester.test_login(username_field=user_field, password_field=pass_field)
                  
                  if sqli_vulns:
-                     poc_steps = f"""
+                     human_sqli_poc = f"""
+**Step-by-Step Reproduction:**
 1. Navigate to the login page: `{target_url}`
-2. In the **{user_field}** field, enter the following payload:
+2. In the **{user_field}** input field, copy and paste the following payload *exactly* (including any quotes):
    ```text
    {sqli_vulns[0]['payload']}
    ```
-3. Enter anything in the **{pass_field}** field (e.g., `test`).
-4. Click the **Login** button.
-5. **Result**: You will be successfully logged in as the administrator, bypassing authentication.
+3. In the **{pass_field}** field, enter any random text (e.g., `12345`).
+4. Click the **Login** / **Submit** button.
+5. **Observation**: 
+   - You should be logged in immediately (bypassing the password check).
+   - Or, you might see a database error, or a "Welcome Administrator" message.
 """
                      report_builder.add_vulnerability({
                         "Title": "Critical - SQL Injection (Auth Bypass)",
@@ -188,7 +197,7 @@ def main():
                         "Type": "Injection (SQLi)",
                         "Component": "Login Module",
                         "Details": f"The following payloads successfully bypassed authentication (User Field: {user_field}):\n{sqli_vulns}",
-                        "PoC": poc_steps,
+                        "PoC": human_sqli_poc,
                         "Impact": "Full account takeover, potentially admin access.",
                         "CVSS": "Critical",
                         "Remediation": "Use parameterized queries (Prepared Statements)."
@@ -202,26 +211,46 @@ def main():
                      exploit_path = poc_gen.generate_sqli_poc(target_url, sqli_vulns[0]['payload'], method=sqli_vulns[0]['method'], params={user_field: "PAYLOAD", pass_field: "password"})
                      print(f"{Fore.RED}[+] Generated SQLi Exploit: {exploit_path}")
 
-                 # NEW: NoSQL Injection Check
-                 nosqli_tester = NoSQLInjector(target_url)
-                 nosqli_vulns = nosqli_tester.test_login(username_field=user_field, password_field=pass_field)
+        # NoSQL Injection Check
+        if args.scan_all or args.check_sqli:
+             # Re-use targets from SQLi or re-derive
+             nosqli_targets = targets_to_check if 'targets_to_check' in locals() else [{'url': args.target, 'inputs': []}]
+             
+             for item in nosqli_targets:
+                 # Guess fields if variables not in scope (re-logic or reuse)
+                 # Simplified: Just grab from item if available, else default
+                 t_url = item['url']
+                 u_field = "username" 
+                 p_field = "password"
+                 if item['inputs']:
+                     for i in item['inputs']:
+                         if "user" in i['name']: u_field = i['name']
+                         if "pass" in i['name']: p_field = i['name']
+
+                 nosqli_tester = NoSQLInjector(t_url)
+                 nosqli_vulns = nosqli_tester.test_login(username_field=u_field, password_field=p_field)
                  
                  if nosqli_vulns:
-                     poc_step = f"""
-1. Send a POST request to `{target_url}` with the header `Content-Type: application/json`.
-2. Body:
+                     human_nosqli_poc = f"""
+**Step-by-Step Reproduction (using tools):**
+*Note: This exploit requires modifying hidden request data, which cannot be done easily in a standard browser address bar.*
+1. Open a tool like **Burp Suite** or **Postman**.
+2. Set the Request Method to `POST` and URL to `{t_url}`.
+3. Set the Header `Content-Type: application/json`.
+4. In the Body, paste this JSON Payload:
    ```json
    {nosqli_vulns[0]['payload']}
    ```
-3. **Result**: Authentication bypassed.
+5. Send the request.
+6. **Observation**: The server response should indicate a successful login (e.g., HTTP 200 OK, a Session Token, or a Redirect to Dashboard).
 """
                      report_builder.add_vulnerability({
                         "Title": "Critical - NoSQL Injection (Auth Bypass)",
-                        "Summary": f"NoSQL Injection found in login form at {target_url}.",
+                        "Summary": f"NoSQL Injection found in login form at {t_url}.",
                         "Type": "Injection (NoSQL)",
                         "Component": "Login Module (MongoDB/CouchDB)",
                         "Details": f"The following payloads bypassed authentication:\n{nosqli_vulns}",
-                        "PoC": poc_step,
+                        "PoC": human_nosqli_poc,
                         "Impact": "Full account takeover, potentially admin access.",
                         "CVSS": "Critical",
                         "Remediation": "Sanitize input, check types (prevent objects where strings expected)."
@@ -231,6 +260,11 @@ def main():
         targets_to_scan = [args.target]
         if args.scan_all and mapper.endpoints:
             targets_to_scan.extend(mapper.endpoints)
+            
+        # Also add discovered login form actions (so XSS/RCE scan them too)
+        if login_forms:
+             for f in login_forms:
+                 targets_to_scan.append(f['action'])
         
         # Remove duplicates
         targets_to_scan = list(set(targets_to_scan))
@@ -244,12 +278,14 @@ def main():
                 xss_vulns = xss_tester.test_reflected(url)
                 
                 if xss_vulns:
-                    poc_xss = f"""
-1. Visit the following URL:
-   ```text
-   {xss_vulns[0]['url']}
-   ```
-2. **Result**: An alert box with '1' should appear, confirming the XSS execution.
+                    human_poc = f"""
+**Step-by-Step Reproduction:**
+1. Open a standard web browser (Chrome/Firefox).
+2. Copy the following URL exactly:
+   `{xss_vulns[0]['url']}`
+3. Paste it into the address bar and press Enter.
+4. **Observation**: You should see a browser pop-up alert box displaying the number '1' or the text from the payload.
+   - *Note*: If the browser blocks the popup, check the Developer Tools (F12) -> Console for the executed error/log.
 """
                     report_builder.add_vulnerability({
                         "Title": "High - Reflected Cross-Site Scripting (XSS)",
@@ -257,7 +293,7 @@ def main():
                         "Type": "Injection (XSS)",
                         "Component": "URL Parameter",
                         "Details": f"Payload reflected in response:\n{xss_vulns}",
-                        "PoC": poc_xss,
+                        "PoC": human_poc,
                         "Impact": "Attacker can execute arbitrary scripts in user's browser (Session Hijacking).",
                         "CVSS": "High",
                         "Remediation": "Input validation and Output Encoding (e.g., HTML Entity Encoding)."
@@ -422,6 +458,32 @@ def main():
                  if form['action'] != args.target:
                      targets_defaults.append({'url': form['action'], 'inputs': form['inputs']})
             
+             # Brute Force Check (Optional / Flag-based)
+             if args.brute_force:
+                 brute_forcer = BruteForcer()
+                 for item in targets_defaults:
+                     # Guess username (admin by default) and fields
+                     user_f = "username"
+                     if item['inputs']:
+                         for i in item['inputs']:
+                             if "user" in i['name'] or "name" in i['name']: user_f = i['name']
+                     
+                     # Using 'admin' as target user for now
+                     found_pass = brute_forcer.run(item['url'], "admin", threads=10)
+                     
+                     if found_pass:
+                         report_builder.add_vulnerability({
+                            "Title": "Critical - Weak Password (Brute Force)",
+                            "Summary": f"Password cracked for user 'admin' at {item['url']}.",
+                            "Type": "Weak Authentication",
+                            "Component": "Authentication",
+                            "Details": f"**Credentials Found:**\nUser: admin\nPass: {found_pass}",
+                            "PoC": f"Login with admin:{found_pass}",
+                            "Impact": "Unauthorized access.",
+                            "CVSS": "Critical",
+                            "Remediation": "Enforce strong password policies and rate limiting."
+                         })
+
              def_scanner = DefaultCredScanner()
              
              for item in targets_defaults:
@@ -473,9 +535,8 @@ def main():
 
              # 2. Path Traversal (check targets with params)
              for url in targets_to_scan:
-                 if "=" in url:
-                     trav_findings = ac_scanner.scan_traversal(url)
-                     if trav_findings:
+                 trav_findings = ac_scanner.scan_traversal(url)
+                 if trav_findings:
                          details = "\n".join([f"- {f['url']} ({f['details']})" for f in trav_findings])
                          report_builder.add_vulnerability({
                             "Title": "High - Path Traversal (OWASP A01:2025)",
@@ -493,17 +554,30 @@ def main():
         if args.scan_all:
              rce_agent = RCEAgent()
              for url in targets_to_scan:
-                 if "=" in url:
-                     rce_findings = rce_agent.scan(url)
-                     if rce_findings:
+                 rce_findings = rce_agent.scan(url)
+                 if rce_findings:
                          details = "\n".join([f"- {f['type']} at {f['url']} (Payload: `{f['payload']}`)" for f in rce_findings])
+                         # Determine Title based on primary finding (CWE-77 vs CWE-94)
+                         cwe_id = rce_findings[0].get('cwe', 'CWE-77')
+                         title = f"Critical - Command Injection ({cwe_id})" if cwe_id == 'CWE-77' else "Critical - Remote Code Execution (SSTI)"
+                         
+                         human_rce_poc = f"""
+**Step-by-Step Reproduction:**
+1. Open your web browser or a tool like Postman.
+2. Navigate to the following Vulnerable URL:
+   `{rce_findings[0]['url']}`
+   *(Note: The payload `{rce_findings[0]['payload']}` is already embedded in this link)*
+3. **Observation**: Look at the page content. You should see system-level output.
+   - For Command Injection: Look for user details like `uid=0(root)` or `www-data`.
+   - For Code Injection: Look for a computation result (e.g., `49` from `7*7`) or PHP version info.
+"""
                          report_builder.add_vulnerability({
-                            "Title": "Critical - Remote Code Execution (RCE)",
-                            "Summary": f"Identified {len(rce_findings)} RCE vulnerabilities.",
-                            "Type": "Remote Code Execution",
+                            "Title": title,
+                            "Summary": f"Identified {len(rce_findings)} RCE vulnerabilities ({cwe_id}).",
+                            "Type": f"Remote Code Execution ({cwe_id})",
                             "Component": "OS Command / Template Engine",
                             "Details": f"**Findings:**\n{details}",
-                            "PoC": f"Visit the URL with the payload: `{rce_findings[0]['payload']}`",
+                            "PoC": human_rce_poc,
                             "Impact": "Full system compromise.",
                             "CVSS": "Critical",
                             "Remediation": "Sanitize input, avoid system calls, use safe APIs."
@@ -538,6 +612,122 @@ def main():
                     "CVSS": "Critical (9.8)",
                     "Remediation": "Apply Oracle Critical Patch Update (CPU) or block T3/IIOP ports."
                  })
+
+        # CSRF Check (A01/A07)
+        if args.scan_all:
+             csrf_scanner = CSRFScanner()
+             # Run on all endpoints that might have forms
+             for url in targets_to_scan:
+                 csrf_findings = csrf_scanner.scan(url)
+                 if csrf_findings:
+                     details = "\n".join([f"- {f['type']}: {f['details']} (Form Action: {f.get('form_action', 'N/A')})" for f in csrf_findings])
+                     human_csrf_poc = f"""
+**Step-by-Step Reproduction:**
+1. Create a new file on your desktop named `exploit.html`.
+2. Open it with a text editor (Notepad) and paste the following code:
+   ```html
+   <html>
+     <body>
+       <h1>CSRF PoC</h1>
+       <form action="{csrf_findings[0].get('form_action', 'TARGET_URL')}" method="POST">
+         <input type="submit" value="Click to exploit">
+       </form>
+       <script>document.forms[0].submit();</script>
+     </body>
+   </html>
+   ```
+3. Save the file.
+4. **Log in** to the target application in your browser.
+5. While logged in, open `exploit.html` with the same browser.
+6. **Observation**: The action should be performed immediately without your consent (e.g., password change, data delete), proving the site accepts requests from external sources.
+"""
+                     report_builder.add_vulnerability({
+                        "Title": "Medium - Cross-Site Request Forgery (CSRF)",
+                        "Summary": f"Identified potential CSRF vulnerabilities.",
+                        "Type": "CSRF",
+                        "Component": "Session Management",
+                        "Details": f"**Findings:**\n{details}",
+                        "PoC": human_csrf_poc,
+                        "Impact": "Attacker can force authenticated users to perform unwanted actions.",
+                        "CVSS": "Medium",
+                        "Remediation": "Implement Anti-CSRF tokens (Synchronizer Token Pattern) and set SameSite=Strict cookies."
+                     })
+
+        # SSRF Check
+        if args.scan_all:
+             ssrf_scanner = SSRFScanner()
+             for url in targets_to_scan:
+                 ssrf_findings = ssrf_scanner.scan(url)
+                 if ssrf_findings:
+                         details = "\n".join([f"- {f['type']} at {f['url']} (Payload: `{f['payload']}`)" for f in ssrf_findings])
+                         human_ssrf_poc = f"""
+**Step-by-Step Reproduction:**
+1. Open your web browser.
+2. Visit the Vulnerable URL:
+   `{ssrf_findings[0]['url']}`
+3. **Observation**:
+   - **Localhost**: If you see a generic login page or server default page that is normally only accessible locally, the attack succeeded.
+   - **Cloud Metadata**: If you see JSON data with keys like `ami-id`, `instance-id`, or `security-credentials`, the server is exposing critical cloud infrastructure data.
+   - **File Read**: If you see the contents of a system file (like users: `root:x:0:0`), the server has Local File Inclusion.
+"""
+                         report_builder.add_vulnerability({
+                            "Title": "Critical - Server-Side Request Forgery (SSRF)",
+                            "Summary": f"Identified {len(ssrf_findings)} SSRF vulnerabilities.",
+                            "Type": "SSRF",
+                            "Component": "Input Validation",
+                            "Details": f"**Findings:**\n{details}",
+                            "PoC": human_ssrf_poc,
+                            "Impact": "Access to internal metadata service (Cloud Credential Theft) or local files.",
+                            "CVSS": "Critical",
+                             "Remediation": "Whitelist permitted domains/IPs, disable HTTP redirects, block internal IP ranges."
+                         })
+
+        # General Compliance Check (Best Practices)
+        if args.scan_all:
+            gen_scanner = GeneralScanner()
+            # Run on base target only (usually sufficient for headers/files)
+            gen_findings = gen_scanner.scan(args.target)
+            
+            if gen_findings:
+                details = "\n".join([f"- [{f['severity']}] {f['type']}: {f['details']}" for f in gen_findings])
+                report_builder.add_vulnerability({
+                    "Title": "Low - General Compliance & Best Practices",
+                    "Summary": f"Identified {len(gen_findings)} compliance or best-practice items.",
+                    "Type": "Security Misconfiguration / Info",
+                    "Component": "General",
+                    "Details": f"**Findings:**\n{details}",
+                    "PoC": "Manual Verification: Check headers, visit discovered files, or inspect source code comments.",
+                        "Impact": "Varies (Information Leakage to Misconfiguration).",
+                        "CVSS": "Low",
+                        "Remediation": "Address reported items (e.g., disable TRACE, remove comments, secure cookies)."
+                })
+
+        # Logic Analysis (LLM)
+        if args.scan_all and gemini:
+            print(f"{Fore.CYAN}[*] Sending generic target content to Gemini for Logic Analysis...")
+            try:
+                # Fetch main page content
+                r = requests.get(args.target, timeout=10)
+                flow_data = {
+                    'request': f"GET {args.target}",
+                    'response': r.text[:2000] # Limit to avoid token limits
+                }
+                
+                logic_findings = analyzer.analyze_flow(flow_data)
+                if logic_findings:
+                     report_builder.add_vulnerability({
+                       "Title": "Informational - AI Logic Analysis",
+                       "Summary": f"Gemini A.I. analyzed the application response.",
+                       "Type": "AI Analysis",
+                       "Component": "Logic Layer",
+                       "Details": f"**AI Analysis Findings:**\n{logic_findings}",
+                       "PoC": "N/A (AI Generated Observation)",
+                       "Impact": "Potential logic flaws or interesting verification points.",
+                       "CVSS": "Info",
+                       "Remediation": "Manual review recommended."
+                    })
+            except Exception as e:
+                print(f"{Fore.YELLOW}[!] LLM Logic Analysis failed: {e}")
 
         # Save Report
         report_builder.save_report(filename="scan_report.md")

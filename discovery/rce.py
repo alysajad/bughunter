@@ -24,6 +24,16 @@ class RCEAgent:
             {"payload": "<%= 7*7 %>", "check": "49", "type": "SSTI (Code Injection)"},
             {"payload": "#{7*7}", "check": "49", "type": "SSTI (Code Injection)"},
         ]
+        
+        self.code_payloads = [
+            # PHP Code Injection
+            {"payload": "; phpinfo();", "check": "PHP Version", "type": "Code Injection (PHP)"},
+            {"payload": "'; phpinfo(); //", "check": "PHP Version", "type": "Code Injection (PHP)"},
+            {"payload": "\"; phpinfo(); //", "check": "PHP Version", "type": "Code Injection (PHP)"},
+            # Python Code Injection (context dependent, tricky to blind check without OOB)
+            # We look for simple math eval which is similar to SSTI but might work in exec()
+            {"payload": "__import__('os').popen('echo CODE_INJ_TEST').read()", "check": "CODE_INJ_TEST", "type": "Code Injection (Python)"}
+        ]
 
     def scan(self, target_url):
         """
@@ -43,7 +53,7 @@ class RCEAgent:
             pairs = params.split('&')
             
             # Combine all payloads
-            all_tests = self.cmd_payloads + self.ssti_payloads
+            all_tests = self.cmd_payloads + self.ssti_payloads + self.code_payloads
             
             for i, pair in enumerate(pairs):
                 if '=' in pair:
@@ -100,6 +110,7 @@ class RCEAgent:
         print(f"{Fore.RED}[!!!] {test['type']} Found: {url}")
         return {
             "type": test['type'],
+            "cwe": "CWE-77" if "Command" in test['type'] else "CWE-94", # CWE-94 for Code Injection (SSTI)
             "details": f"Payload executed successfully in parameter '{param}'.",
             "url": url,
             "payload": test['payload']
