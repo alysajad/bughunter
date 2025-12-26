@@ -405,24 +405,39 @@ def main():
 
         # Exception Handling Check (A10:2025)
         if args.scan_all:
-             # Loop through targets specifically for exception testing as it's input-heavy
+             all_exceptions = []
              for url in targets_to_scan:
                 exc_scanner = ExceptionScanner()
                 exceptions = exc_scanner.scan(url)
-                
                 if exceptions:
-                    details = "\n".join([f"- {e['type']}: {e['details']} in {e['url']}" for e in exceptions])
-                    report_builder.add_vulnerability({
-                        "Title": "Medium - Mishandling of Exceptional Conditions (OWASP A10:2025)",
-                        "Summary": f"Triggered {len(exceptions)} unhandled error states or latency spikes.",
-                        "Type": "Improper Exception Handling",
-                        "Component": "Logic / Input Handling",
-                        "Details": f"**Findings:**\n{details}",
-                        "PoC": "Replay the specific payloads in the URL to observe the failure state.",
-                        "Impact": "Can lead to Information Disclosure, Logic Bypasses, or Denial of Service.",
-                        "CVSS": "Medium",
-                        "Remediation": "Implement global exception handlers and ensure 'Fail Safe' defaults."
-                    })
+                    for e in exceptions:
+                        e['url'] = url # Ensure URL is tracked
+                        all_exceptions.append(e)
+             
+             if all_exceptions:
+                # De-duplicate by type or detail
+                unique_exc = []
+                seen_exc = set()
+                for e in all_exceptions:
+                    sig = f"{e['type']}:{e['details']}"
+                    if sig not in seen_exc:
+                        seen_exc.add(sig)
+                        unique_exc.append(e)
+
+                details = "\n".join([f"- {e['type']}: {e['details']} in {e['url']}" for e in unique_exc[:10]]) # Limit to 10
+                if len(unique_exc) > 10: details += f"\n... (and {len(unique_exc)-10} more)"
+                
+                report_builder.add_vulnerability({
+                    "Title": "Medium - Mishandling of Exceptional Conditions (OWASP A10:2025)",
+                    "Summary": f"Triggered {len(unique_exc)} unique unhandled error states.",
+                    "Type": "Improper Exception Handling",
+                    "Component": "Logic / Input Handling",
+                    "Details": f"**Findings:**\n{details}",
+                    "PoC": "Replay the specific payloads in the URL to observe the failure state.",
+                    "Impact": "Can lead to Information Disclosure, Logic Bypasses, or Denial of Service.",
+                    "CVSS": "Medium",
+                    "Remediation": "Implement global exception handlers and ensure 'Fail Safe' defaults."
+                })
 
         # Crypto Check (A04:2025)
         if args.scan_all:
@@ -534,59 +549,67 @@ def main():
                  })
 
              # 2. Path Traversal (check targets with params)
+             all_trav_findings = []
              for url in targets_to_scan:
                  trav_findings = ac_scanner.scan_traversal(url)
                  if trav_findings:
-                         details = "\n".join([f"- {f['url']} ({f['details']})" for f in trav_findings])
-                         report_builder.add_vulnerability({
-                            "Title": "High - Path Traversal (OWASP A01:2025)",
-                            "Summary": "Successful Directory Traversal identified.",
-                            "Type": "Path Traversal",
-                            "Component": "File System",
-                            "Details": f"**Findings:**\n{details}",
-                            "PoC": "Visit the URL to view system files.",
-                            "Impact": "Disclosure of sensitive system files (/etc/passwd, win.ini).",
-                            "CVSS": "High",
-                            "Remediation": "Validate inputs and prevent file path manipulation."
-                         })
+                     all_trav_findings.extend(trav_findings)
+             
+             if all_trav_findings:
+                  details = "\n".join([f"- {f['url']} ({f['details']})" for f in all_trav_findings])
+                  report_builder.add_vulnerability({
+                     "Title": "High - Path Traversal (OWASP A01:2025)",
+                     "Summary": f"Successful Directory Traversal identified on {len(all_trav_findings)} endpoints.",
+                     "Type": "Path Traversal",
+                     "Component": "File System",
+                     "Details": f"**Findings:**\n{details}",
+                     "PoC": "Visit the URL to view system files.",
+                     "Impact": "Disclosure of sensitive system files (/etc/passwd, win.ini).",
+                     "CVSS": "High",
+                     "Remediation": "Validate inputs and prevent file path manipulation."
+                  })
 
         # RCE Check (Command Injection / SSTI) (A03:2025/General)
         if args.scan_all:
              rce_agent = RCEAgent()
+             all_rce_findings = []
              for url in targets_to_scan:
                  rce_findings = rce_agent.scan(url)
                  if rce_findings:
-                         details = "\n".join([f"- {f['type']} at {f['url']} (Payload: `{f['payload']}`)" for f in rce_findings])
-                         # Determine Title based on primary finding (CWE-77 vs CWE-94)
-                         cwe_id = rce_findings[0].get('cwe', 'CWE-77')
-                         title = f"Critical - Command Injection ({cwe_id})" if cwe_id == 'CWE-77' else "Critical - Remote Code Execution (SSTI)"
-                         
-                         human_rce_poc = f"""
+                     all_rce_findings.extend(rce_findings)
+            
+             if all_rce_findings:
+                 details = "\n".join([f"- {f['type']} at {f['url']} (Payload: `{f['payload']}`)" for f in all_rce_findings])
+                 # Determine Title based on primary finding (CWE-77 vs CWE-94)
+                 cwe_id = all_rce_findings[0].get('cwe', 'CWE-77')
+                 title = f"Critical - Command Injection ({cwe_id})" if cwe_id == 'CWE-77' else "Critical - Remote Code Execution (SSTI)"
+                 
+                 human_rce_poc = f"""
 **Step-by-Step Reproduction:**
 1. Open your web browser or a tool like Postman.
 2. Navigate to the following Vulnerable URL:
-   `{rce_findings[0]['url']}`
-   *(Note: The payload `{rce_findings[0]['payload']}` is already embedded in this link)*
+   `{all_rce_findings[0]['url']}`
+   *(Note: The payload `{all_rce_findings[0]['payload']}` is already embedded in this link)*
 3. **Observation**: Look at the page content. You should see system-level output.
    - For Command Injection: Look for user details like `uid=0(root)` or `www-data`.
    - For Code Injection: Look for a computation result (e.g., `49` from `7*7`) or PHP version info.
 """
-                         report_builder.add_vulnerability({
-                            "Title": title,
-                            "Summary": f"Identified {len(rce_findings)} RCE vulnerabilities ({cwe_id}).",
-                            "Type": f"Remote Code Execution ({cwe_id})",
-                            "Component": "OS Command / Template Engine",
-                            "Details": f"**Findings:**\n{details}",
-                            "PoC": human_rce_poc,
-                            "Impact": "Full system compromise.",
-                            "CVSS": "Critical",
-                            "Remediation": "Sanitize input, avoid system calls, use safe APIs."
-                         })
-                         
-                         # Generate PoC if possible
-                         poc_gen = PoCGenerator()
-                         exploit_path = poc_gen.generate_xss_poc(rce_findings[0]['url'], "RCE_PARAM", rce_findings[0]['payload']) # Reusing generic generator for now
-                         print(f"{Fore.MAGENTA}[+] Generated RCE Exploit Script: {exploit_path}")
+                 report_builder.add_vulnerability({
+                    "Title": title,
+                    "Summary": f"Identified {len(all_rce_findings)} RCE vulnerabilities ({cwe_id}).",
+                    "Type": f"Remote Code Execution ({cwe_id})",
+                    "Component": "OS Command / Template Engine",
+                    "Details": f"**Findings:**\n{details}",
+                    "PoC": human_rce_poc,
+                    "Impact": "Full system compromise.",
+                    "CVSS": "Critical",
+                    "Remediation": "Sanitize input, avoid system calls, use safe APIs."
+                 })
+                 
+                 # Generate PoC if possible
+                 poc_gen = PoCGenerator()
+                 exploit_path = poc_gen.generate_xss_poc(all_rce_findings[0]['url'], "RCE_PARAM", all_rce_findings[0]['payload']) # Reusing generic generator for now
+                 print(f"{Fore.MAGENTA}[+] Generated RCE Exploit Script: {exploit_path}")
 
         # Targeted CVE Check (CVE-2023-21839)
         if args.scan_all:
@@ -616,12 +639,31 @@ def main():
         # CSRF Check (A01/A07)
         if args.scan_all:
              csrf_scanner = CSRFScanner()
+             all_csrf_findings = []
              # Run on all endpoints that might have forms
              for url in targets_to_scan:
                  csrf_findings = csrf_scanner.scan(url)
                  if csrf_findings:
-                     details = "\n".join([f"- {f['type']}: {f['details']} (Form Action: {f.get('form_action', 'N/A')})" for f in csrf_findings])
-                     human_csrf_poc = f"""
+                     all_csrf_findings.extend(csrf_findings)
+            
+             if all_csrf_findings:
+                 # Deduplicate based on form action
+                 unique_csrf = []
+                 seen_actions = set()
+                 for f in all_csrf_findings:
+                     action = f.get('form_action', 'N/A')
+                     if action not in seen_actions and action != 'N/A':
+                         seen_actions.add(action)
+                         unique_csrf.append(f)
+                     elif action == 'N/A':
+                         unique_csrf.append(f) # Keep if unknown action
+
+                 details = "\n".join([f"- {f['type']}: {f['details']} (Form Action: {f.get('form_action', 'N/A')})" for f in unique_csrf])
+                 
+                 # Use first finding for PoC
+                 first_finding = unique_csrf[0] if unique_csrf else all_csrf_findings[0]
+                 
+                 human_csrf_poc = f"""
 **Step-by-Step Reproduction:**
 1. Create a new file on your desktop named `exploit.html`.
 2. Open it with a text editor (Notepad) and paste the following code:
@@ -629,7 +671,7 @@ def main():
    <html>
      <body>
        <h1>CSRF PoC</h1>
-       <form action="{csrf_findings[0].get('form_action', 'TARGET_URL')}" method="POST">
+       <form action="{first_finding.get('form_action', 'TARGET_URL')}" method="POST">
          <input type="submit" value="Click to exploit">
        </form>
        <script>document.forms[0].submit();</script>
@@ -641,46 +683,50 @@ def main():
 5. While logged in, open `exploit.html` with the same browser.
 6. **Observation**: The action should be performed immediately without your consent (e.g., password change, data delete), proving the site accepts requests from external sources.
 """
-                     report_builder.add_vulnerability({
-                        "Title": "Medium - Cross-Site Request Forgery (CSRF)",
-                        "Summary": f"Identified potential CSRF vulnerabilities.",
-                        "Type": "CSRF",
-                        "Component": "Session Management",
-                        "Details": f"**Findings:**\n{details}",
-                        "PoC": human_csrf_poc,
-                        "Impact": "Attacker can force authenticated users to perform unwanted actions.",
-                        "CVSS": "Medium",
-                        "Remediation": "Implement Anti-CSRF tokens (Synchronizer Token Pattern) and set SameSite=Strict cookies."
-                     })
+                 report_builder.add_vulnerability({
+                    "Title": "Medium - Cross-Site Request Forgery (CSRF)",
+                    "Summary": f"Identified {len(unique_csrf)} unique CSRF vulnerabilities.",
+                    "Type": "CSRF",
+                    "Component": "Session Management",
+                    "Details": f"**Findings (Unique Actions):**\n{details}",
+                    "PoC": human_csrf_poc,
+                    "Impact": "Attacker can force authenticated users to perform unwanted actions.",
+                    "CVSS": "Medium",
+                    "Remediation": "Implement Anti-CSRF tokens (Synchronizer Token Pattern) and set SameSite=Strict cookies."
+                 })
 
         # SSRF Check
         if args.scan_all:
              ssrf_scanner = SSRFScanner()
+             all_ssrf_findings = []
              for url in targets_to_scan:
                  ssrf_findings = ssrf_scanner.scan(url)
                  if ssrf_findings:
-                         details = "\n".join([f"- {f['type']} at {f['url']} (Payload: `{f['payload']}`)" for f in ssrf_findings])
-                         human_ssrf_poc = f"""
+                    all_ssrf_findings.extend(ssrf_findings)
+
+             if all_ssrf_findings:
+                 details = "\n".join([f"- {f['type']} at {f['url']} (Payload: `{f['payload']}`)" for f in all_ssrf_findings])
+                 human_ssrf_poc = f"""
 **Step-by-Step Reproduction:**
 1. Open your web browser.
 2. Visit the Vulnerable URL:
-   `{ssrf_findings[0]['url']}`
+   `{all_ssrf_findings[0]['url']}`
 3. **Observation**:
    - **Localhost**: If you see a generic login page or server default page that is normally only accessible locally, the attack succeeded.
    - **Cloud Metadata**: If you see JSON data with keys like `ami-id`, `instance-id`, or `security-credentials`, the server is exposing critical cloud infrastructure data.
    - **File Read**: If you see the contents of a system file (like users: `root:x:0:0`), the server has Local File Inclusion.
 """
-                         report_builder.add_vulnerability({
-                            "Title": "Critical - Server-Side Request Forgery (SSRF)",
-                            "Summary": f"Identified {len(ssrf_findings)} SSRF vulnerabilities.",
-                            "Type": "SSRF",
-                            "Component": "Input Validation",
-                            "Details": f"**Findings:**\n{details}",
-                            "PoC": human_ssrf_poc,
-                            "Impact": "Access to internal metadata service (Cloud Credential Theft) or local files.",
-                            "CVSS": "Critical",
-                             "Remediation": "Whitelist permitted domains/IPs, disable HTTP redirects, block internal IP ranges."
-                         })
+                 report_builder.add_vulnerability({
+                    "Title": "Critical - Server-Side Request Forgery (SSRF)",
+                    "Summary": f"Identified {len(all_ssrf_findings)} SSRF vulnerabilities.",
+                    "Type": "SSRF",
+                    "Component": "Input Validation",
+                    "Details": f"**Findings:**\n{details}",
+                    "PoC": human_ssrf_poc,
+                    "Impact": "Access to internal metadata service (Cloud Credential Theft) or local files.",
+                    "CVSS": "Critical",
+                     "Remediation": "Whitelist permitted domains/IPs, disable HTTP redirects, block internal IP ranges."
+                 })
 
         # General Compliance Check (Best Practices)
         if args.scan_all:
