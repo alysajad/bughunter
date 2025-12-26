@@ -1,0 +1,23 @@
+# Python
+__pycache__/
+*.pyc
+
+# Environment Variables (Secrets)
+.env
+
+# Project Artifacts (Reports)
+scan_report.md
+scan_report.pdf
+*.pdf
+
+# Wordlists (Downloaded by Agent)
+*.txt
+!requirements.txt
+rockyou.txt
+top1000.txt
+top10000.txt
+phpbb.txt
+
+# OS
+.DS_Store
+Thumbs.db
