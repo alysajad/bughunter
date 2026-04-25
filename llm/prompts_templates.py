@@ -1,4 +1,4 @@
-# Prompts for Gemini Analysis
+# Prompts for Claude Analysis
 
 VULN_ANALYSIS_PROMPT = """
 You are a Senior Bug Bounty Hunter. Analyze the provided HTTP request/response pair or code snippet for security vulnerabilities.

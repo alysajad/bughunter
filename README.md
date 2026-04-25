@@ -48,7 +48,7 @@ The system covers the **OWASP Top 10 (2025)** and checks for specific high-impac
 
 | Agent | Type | Description |
 | :--- | :--- | :--- |
-| **LogicAnalyzer** | **AI / LLM** | Uses **Gemini AI** to analyze request/response flows for **Business Logic Flaws** that are context-dependent and hard to detect with signatures. |
+| **LogicAnalyzer** | **AI / LLM** | Uses **Claude AI** (Anthropic) to analyze request/response flows for **Business Logic Flaws** that are context-dependent and hard to detect with signatures. |
 | **CVEAgent** | **CVE-2023-21839** | **Oracle WebLogic RCE**: Connects to T3/IIOP port (7001) and sends a handshake packet. A successful T3 handshake indicates exposure to unauthenticated JNDI injection. |
 
 ---
@@ -57,7 +57,7 @@ The system covers the **OWASP Top 10 (2025)** and checks for specific high-impac
 
 ### Quick Start
 1.  **Install Dependencies**: `pip install -r requirements.txt`
-2.  **Environment**: Create `.env` with `GEMINI_API_KEY=...` (Optional for AI logic).
+2.  **Environment**: Create `.env` with `ANTHROPIC_API_KEY=...` (Optional for AI logic).
 3.  **Run UI**: `python app.py` -> Open `http://localhost:5000`.
 
 ### CLI Mode

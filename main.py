@@ -5,7 +5,7 @@ from colorama import init, Fore
 from recon.mapper import EndpointMapper
 from recon.auth import AuthDetector
 from recon.subdomains import SubdomainFinder
-from llm.client import GeminiClient
+from llm.client import ClaudeClient
 from discovery.logic import LogicAnalyzer
 from reporting.builder import ReportBuilder
 from reporting.pdf_generator import PDFGenerator
@@ -40,7 +40,7 @@ def main():
     parser = argparse.ArgumentParser(description="Bug Bounty Hunter Agent")
     parser.add_argument("--target", help="Target URL", required=True)
     parser.add_argument("--scope", help="Scope definition (domain/wildcard)", required=True)
-    parser.add_argument("--gemini-key", help="Gemini API Key (optional, can use env var)", required=False)
+    parser.add_argument("--anthropic-key", help="Anthropic API Key (optional, can use env var)", required=False)
     parser.add_argument("--check-sqli", help="Force SQLi check on target", action="store_true")
     parser.add_argument("--check-xss", help="Force Reflected XSS check on target params", action="store_true")
     parser.add_argument("--check-idor", help="Force IDOR check", action="store_true")
@@ -67,13 +67,13 @@ def main():
     try:
         report_builder = ReportBuilder()
         
-        api_key = args.gemini_key or os.getenv("GEMINI_API_KEY")
+        api_key = args.anthropic_key or os.getenv("ANTHROPIC_API_KEY")
         if api_key:
-            gemini = GeminiClient(api_key=api_key)
-            print(f"{Fore.GREEN}[+] Gemini Client initialized.")
+            claude = ClaudeClient(api_key=api_key)
+            print(f"{Fore.GREEN}[+] Claude Client initialized.")
         else:
-            print(f"{Fore.YELLOW}[!] No Gemini Key provided. LLM features will be disabled.")
-            gemini = None
+            print(f"{Fore.YELLOW}[!] No Anthropic Key provided. LLM features will be disabled.")
+            claude = None
 
         # 0. Subdomain Recon (Optional but recommended for full scope)
         # We run this check if --scan-all is enabled or explicit.
@@ -117,8 +117,8 @@ def main():
                 "Remediation": "Ensure no sensitive endpoints are exposed without authentication."
             })
 
-        if gemini:
-            analyzer = LogicAnalyzer(gemini)
+        if claude:
+            analyzer = LogicAnalyzer(claude)
             print(f"{Fore.GREEN}[+] Logic Analyzer ready.")
 
         # Auth Flow Identification
@@ -748,32 +748,38 @@ def main():
                         "Remediation": "Address reported items (e.g., disable TRACE, remove comments, secure cookies)."
                 })
 
-        # Logic Analysis (LLM)
-        if args.scan_all and gemini:
-            print(f"{Fore.CYAN}[*] Sending generic target content to Gemini for Logic Analysis...")
-            try:
-                # Fetch main page content
-                r = requests.get(args.target, timeout=10)
-                flow_data = {
-                    'request': f"GET {args.target}",
-                    'response': r.text[:2000] # Limit to avoid token limits
-                }
-                
-                logic_findings = analyzer.analyze_flow(flow_data)
-                if logic_findings:
-                     report_builder.add_vulnerability({
-                       "Title": "Informational - AI Logic Analysis",
-                       "Summary": f"Gemini A.I. analyzed the application response.",
-                       "Type": "AI Analysis",
-                       "Component": "Logic Layer",
-                       "Details": f"**AI Analysis Findings:**\n{logic_findings}",
-                       "PoC": "N/A (AI Generated Observation)",
-                       "Impact": "Potential logic flaws or interesting verification points.",
-                       "CVSS": "Info",
-                       "Remediation": "Manual review recommended."
-                    })
-            except Exception as e:
-                print(f"{Fore.YELLOW}[!] LLM Logic Analysis failed: {e}")
+        # Logic Analysis (LLM Integration)
+        if args.scan_all and claude:
+            print(f"{Fore.CYAN}[*] Synchronizing agents: Sending discovered endpoints to Claude for Logic Analysis...")
+            
+            # Prioritize targets: Home page first, then others
+            ai_targets = targets_to_scan[:5] # Analyze top 5 discovered endpoints to balance depth and speed
+            
+            for target_url in ai_targets:
+                print(f"{Fore.CYAN}[*] Analyzing endpoint: {target_url}")
+                try:
+                    # Fetch page content
+                    r = requests.get(target_url, timeout=10)
+                    flow_data = {
+                        'request': f"GET {target_url}",
+                        'response': r.text[:2000] # Provide enough context for the LLM
+                    }
+                    
+                    logic_findings = analyzer.analyze_flow(flow_data)
+                    if logic_findings and "No obvious vulnerabilities found" not in logic_findings:
+                         report_builder.add_vulnerability({
+                           "Title": f"AI Finding - Logic Analysis ({target_url})",
+                           "Summary": f"Claude analyzed the application logic at {target_url}.",
+                           "Type": "AI Analysis / Logic Flaw",
+                           "Component": "Logic Layer",
+                           "Details": f"**Analyzed Endpoint:** {target_url}\n\n**Findings:**\n{logic_findings}",
+                           "PoC": "Manual verification of the logic flow suggested by AI.",
+                           "Impact": "Varies based on logic flaw found.",
+                           "CVSS": "Review Required",
+                           "Remediation": "Manual review of the reported logic sequence."
+                        })
+                except Exception as e:
+                    print(f"{Fore.YELLOW}[!] AI Analysis failed for {target_url}: {e}")
 
         # Save Report
         report_builder.save_report(filename="scan_report.md")
