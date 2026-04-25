@@ -28,7 +28,13 @@ from discovery.nosqli import NoSQLInjector
 from discovery.csrf import CSRFScanner
 from discovery.ssrf import SSRFScanner
 from discovery.general import GeneralScanner
-from discovery.bruteforce import BruteForcer
+from discovery.jwt_scanner import JWTScanner
+from discovery.cors_scanner import CORSScanner
+from discovery.open_redirect import OpenRedirectScanner
+from discovery.xxe_scanner import XXEScanner
+from discovery.header_injection import HeaderInjectionScanner
+from discovery.deserialization import DeserializationScanner
+from llm.orchestrator import Orchestrator
 from dotenv import load_dotenv
 import os
 
@@ -48,7 +54,13 @@ def main():
     parser.add_argument("--session-b", help="Cookie/Session for User B (Attacker)", required=False)
     parser.add_argument("--fuzz", help="Run input fuzzing on target params", action="store_true")
     parser.add_argument("--brute-force", help="Run password brute-force on login forms", action="store_true")
-    parser.add_argument("--scan-all", help="Run ALL available scans (SQLi, XSS, Fuzz, Auth)", action="store_true")
+    parser.add_argument("--check-jwt", help="Force JWT vulnerability check", action="store_true")
+    parser.add_argument("--check-cors", help="Force CORS misconfiguration check", action="store_true")
+    parser.add_argument("--check-redirect", help="Force Open Redirect check", action="store_true")
+    parser.add_argument("--check-xxe", help="Force XXE Injection check", action="store_true")
+    parser.add_argument("--check-headers", help="Force HTTP Header Injection check", action="store_true")
+    parser.add_argument("--check-deser", help="Force Insecure Deserialization check", action="store_true")
+    parser.add_argument("--scan-all", help="Run ALL available scans", action="store_true")
     
     args = parser.parse_args()
 
@@ -56,6 +68,12 @@ def main():
         args.check_sqli = True
         args.check_xss = True
         args.fuzz = True
+        args.check_jwt = True
+        args.check_cors = True
+        args.check_redirect = True
+        args.check_xxe = True
+        args.check_headers = True
+        args.check_deser = True
         # IDOR requires sessions, so we only run it if sessions are explicitly provided even in scan-all
         if args.session_a and args.session_b:
             args.check_idor = True
@@ -138,6 +156,12 @@ def main():
                 "CVSS": "None",
                 "Remediation": "Ensure these forms are protected against brute-force (Rate Limiting)."
             })
+
+        # --- ORCHESTRATOR PHASE 1 & 2 ---
+        if claude:
+            orchestrator = Orchestrator(claude)
+            ai_plan = orchestrator.phase_1_planning(args.target, args.scope, mapper.endpoints, login_forms)
+            orchestrator.phase_2_recon_analysis(subdomains if 'subdomains' in locals() else [], mapper.endpoints, login_forms)
 
         # SQL Injection Check (Targeted)
         # If we found login forms, we can Auto-Target them!
@@ -748,6 +772,100 @@ def main():
                         "Remediation": "Address reported items (e.g., disable TRACE, remove comments, secure cookies)."
                 })
 
+        # --- NEW AGENTS ---
+        if args.check_jwt:
+            jwt_scanner = JWTScanner()
+            for url in targets_to_scan:
+                jwt_findings = jwt_scanner.scan(url)
+                if jwt_findings:
+                    for f in jwt_findings:
+                        report_builder.add_vulnerability({
+                            "Title": f"High - {f['type']} (OWASP A07:2025)",
+                            "Summary": f"Identified JWT vulnerability on {url}.",
+                            "Type": f['type'], "Component": "Authentication",
+                            "Details": f['details'], "PoC": f['payload'],
+                            "Impact": "Authentication bypass or privilege escalation.",
+                            "CVSS": "High", "Remediation": "Enforce strong secrets and validate signatures."
+                        })
+
+        if args.check_cors:
+            cors_scanner = CORSScanner()
+            cors_findings = cors_scanner.scan(args.target)
+            if cors_findings:
+                for f in cors_findings:
+                    report_builder.add_vulnerability({
+                        "Title": f"Medium/High - {f['type']} (OWASP A01:2025)",
+                        "Summary": f"Identified CORS misconfiguration.",
+                        "Type": f['type'], "Component": "Access Control",
+                        "Details": f['details'], "PoC": f['payload'],
+                        "Impact": "Cross-origin data leakage.",
+                        "CVSS": "Medium", "Remediation": "Restrict Access-Control-Allow-Origin to trusted domains."
+                    })
+
+        if args.check_redirect:
+            redirect_scanner = OpenRedirectScanner()
+            for url in targets_to_scan:
+                redirect_findings = redirect_scanner.scan(url)
+                if redirect_findings:
+                    for f in redirect_findings:
+                        report_builder.add_vulnerability({
+                            "Title": f"Medium - {f['type']} (OWASP A01:2025)",
+                            "Summary": f"Identified Open Redirect on {url}.",
+                            "Type": f['type'], "Component": "Input Validation",
+                            "Details": f['details'], "PoC": f['url'],
+                            "Impact": "Phishing and potentially token leakage.",
+                            "CVSS": "Medium", "Remediation": "Validate redirect targets against a whitelist."
+                        })
+
+        if args.check_xxe:
+            xxe_scanner = XXEScanner()
+            for url in targets_to_scan:
+                xxe_findings = xxe_scanner.scan(url)
+                if xxe_findings:
+                    for f in xxe_findings:
+                        report_builder.add_vulnerability({
+                            "Title": f"High - {f['type']} (OWASP A05:2025)",
+                            "Summary": f"Identified XXE injection on {url}.",
+                            "Type": f['type'], "Component": "XML Parser",
+                            "Details": f['details'], "PoC": f['payload'],
+                            "Impact": "Local file read, SSRF, or DoS.",
+                            "CVSS": "High", "Remediation": "Disable external entities and DTD processing in the XML parser."
+                        })
+
+        if args.check_headers:
+            header_scanner = HeaderInjectionScanner()
+            for url in targets_to_scan:
+                header_findings = header_scanner.scan(url)
+                if header_findings:
+                    for f in header_findings:
+                        report_builder.add_vulnerability({
+                            "Title": f"Medium - {f['type']} (OWASP A02:2025)",
+                            "Summary": f"Identified HTTP Header Injection on {url}.",
+                            "Type": f['type'], "Component": "HTTP Headers",
+                            "Details": f['details'], "PoC": f['payload'],
+                            "Impact": "Cache poisoning, routing bypass, or XSS.",
+                            "CVSS": "Medium", "Remediation": "Validate and sanitize all HTTP headers. Avoid trusting Host header."
+                        })
+
+        if args.check_deser:
+            deser_scanner = DeserializationScanner()
+            for url in targets_to_scan:
+                deser_findings = deser_scanner.scan(url)
+                if deser_findings:
+                    for f in deser_findings:
+                        report_builder.add_vulnerability({
+                            "Title": f"High - {f['type']} (OWASP A08:2025)",
+                            "Summary": f"Identified Insecure Deserialization pattern on {url}.",
+                            "Type": f['type'], "Component": "Data Parsing",
+                            "Details": f['details'], "PoC": f['url'],
+                            "Impact": "Potential Remote Code Execution (RCE).",
+                            "CVSS": "High", "Remediation": "Avoid deserializing untrusted data. Use safe formats like JSON."
+                        })
+
+        # --- ORCHESTRATOR PHASE 3 ---
+        if claude and report_builder.vulnerabilities:
+            orchestrator.phase_3_enumeration(report_builder.vulnerabilities)
+
         # Logic Analysis (LLM Integration)
         if args.scan_all and claude:
             print(f"{Fore.CYAN}[*] Synchronizing agents: Sending discovered endpoints to Claude for Logic Analysis...")
@@ -780,6 +898,17 @@ def main():
                         })
                 except Exception as e:
                     print(f"{Fore.YELLOW}[!] AI Analysis failed for {target_url}: {e}")
+
+        # --- ORCHESTRATOR PHASE 4 ---
+        if claude and report_builder.vulnerabilities:
+            ai_summary = orchestrator.phase_4_exploitation_report(report_builder.vulnerabilities)
+            if ai_summary:
+                report_builder.add_vulnerability({
+                    "Title": "AI Executive Summary & Exploit Chains",
+                    "Summary": "Claude AI generated summary of all verified findings and exploitation chains.",
+                    "Type": "AI Summary", "Component": "Reporting",
+                    "Details": ai_summary, "PoC": "N/A", "Impact": "N/A", "CVSS": "N/A", "Remediation": "N/A"
+                })
 
         # Save Report
         report_builder.save_report(filename="scan_report.md")

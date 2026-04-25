@@ -1,9 +1,14 @@
 # Bug Bounty Hunter Agent System
 
 ## 🌟 Overview
-The **Bug Bounty Hunter Agent** is an advanced, automated security assessment tool designed to emulate the workflow of a professional penetration tester. It goes beyond simple scanning by actively identifying, validating, and establishing Proof-of-Concepts (PoCs) for critical vulnerabilities in web applications.
+BugHunter consists of highly specialized discovery modules (agents) and a core Orchestrator:
 
-The system features a **Task-Oriented Architecture** where specialized "Agents" (modules) handle specific vulnerability classes, from Reconnaissance to Exploitation and Reporting. It includes a modern Web UI for real-time monitoring and interaction.
+*   **AI Orchestrator (`Orchestrator`)**: Uses Claude AI to analyze targets, plan attacks, correlate findings, and generate executive summaries.
+*   **Brute-Force Agent (`BruteForcer`)**: Performs session-aware login attacks using massive wordlists (rockyou, SecLists) with automatic rate-limit detection.
+*   **Authentication & Access (`DefaultCredScanner`, `AuthDetector`)**: Scans for weak defaults and maps authentication flows.
+*   **Injection Agents (`SQLiTester`, `NoSQLiScanner`, `RCEAgent`, `XXEScanner`, `HeaderInjectionScanner`)**: Identifies SQL/NoSQL injections, remote code execution (Cmd/SSTI), XML external entities, and HTTP header manipulation (Host poisoning, CRLF).
+*   **Web Vulnerability Agents (`XSSTester`, `CSRFScanner`, `SSRFScanner`, `OpenRedirectScanner`, `CORSScanner`)**: Covers client-side, server-side, redirect, and cross-origin flaws.
+*   **Cryptography & Integrity (`JWTScanner`, `DeserializationScanner`)**: Tests JWT signature bypasses, weak HMACs, and insecure serialization in Java, PHP, Node, Python, and .NET. Web UI for real-time monitoring and interaction.
 
 ## 🕵️‍♂️ Vulnerability Coverage & Agents
 
@@ -60,13 +65,26 @@ The system covers the **OWASP Top 10 (2025)** and checks for specific high-impac
 2.  **Environment**: Create `.env` with `ANTHROPIC_API_KEY=...` (Optional for AI logic).
 3.  **Run UI**: `python app.py` -> Open `http://localhost:5000`.
 
-### CLI Mode
+### Command Line Interface
+
 ```bash
-python main.py --target http://example.com --scan-all --brute-force
+python main.py --target <URL> [OPTIONS]
+
+Options:
+  --target URL           The base URL to scan.
+  --scope DOMAIN         Limit scanning to this domain (e.g., example.com).
+  --brute-force          Run password brute-force on detected login forms (downloads rockyou/SecLists automatically).
+  --fuzz                 Run input fuzzing on target params.
+  --check-jwt            Force JWT vulnerability check.
+  --check-cors           Force CORS misconfiguration check.
+  --check-redirect       Force Open Redirect check.
+  --check-xxe            Force XXE Injection check.
+  --check-headers        Force HTTP Header Injection check.
+  --check-deser          Force Insecure Deserialization check.
+  --scan-all             Run ALL available scans, including AI Orchestration and advanced vulnerability checks.
+  --session-a COOKIE     Cookie/Session for User A (Required for IDOR checks).
+  --session-b COOKIE     Cookie/Session for User B (Required for IDOR checks).
 ```
-*   `--scan-all`: Enables ALL scanners (SQLi, XSS, RCE, IDOR, NoSQLi, CVE, SSRF, General Compliance, etc.).
-*   `--brute-force`: Enables the active password brute-force agent.
-*   `--fuzz`: Enables Fuzzing/Misconfig scanners.
 
 ---
 

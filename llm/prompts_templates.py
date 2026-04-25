@@ -1,18 +1,61 @@
-# Prompts for Claude Analysis
+# AI Orchestrator Prompts for Claude
 
-VULN_ANALYSIS_PROMPT = """
-You are a Senior Bug Bounty Hunter. Analyze the provided HTTP request/response pair or code snippet for security vulnerabilities.
+PLANNING_PROMPT = """
+You are an elite Bug Bounty Hunter and AI Orchestrator. 
+Your task is to review the initial target information and create a prioritized attack plan.
 
-Focus on:
-1. IDOR (Insecure Direct Object References)
-2. Business Logic Flaws
-3. Authorization Bypasses
-4. Sensitive Data Exposure
+TARGET INFO:
+{target_info}
 
-If a vulnerability is found, explain WHY it is exploitable and provide a potential proof of concept conceptualization.
-If no vulnerability is apparent, state "No obvious vulnerabilities found."
+Based on the URL structure, parameters, and identified technologies, which vulnerability classes are most likely?
+Create a prioritized execution plan for the specific agents we have available.
+Respond with a JSON object containing the plan.
+
+Example JSON format:
+{
+  "target_analysis": "Brief analysis of the target...",
+  "priority_agents": ["SQLInjector", "XXEScanner", "BruteForcer"],
+  "custom_parameters_to_fuzz": ["id", "redirect_url"],
+  "reasoning": "Explanation of why these agents were prioritized."
+}
 """
 
-FUZZING_STRATEGY_PROMPT = """
-Suggest intelligent fuzzing payloads for the following parameters based on their context (name, value type).
+RECON_ANALYSIS_PROMPT = """
+You are an elite Bug Bounty Hunter and AI Orchestrator.
+Review the reconnaissance data gathered from the target.
+
+RECON DATA:
+{recon_data}
+
+Identify the highest value targets (endpoints, forms, custom headers) and suggest specific attack vectors.
+What stands out as highly suspicious or critical to investigate immediately?
+Keep your response concise and focused on actionable next steps.
+"""
+
+ENUMERATION_PROMPT = """
+You are an elite Bug Bounty Hunter and AI Orchestrator.
+Review the enumeration and scanner findings from the current phase.
+
+SCANNER FINDINGS:
+{enumeration_data}
+
+1. Are there any false positives in these findings?
+2. How can these findings be chained together for maximum impact? (e.g., combining CSRF with Open Redirect)
+3. What specific follow-up manual tests would you recommend based on these results?
+"""
+
+EXPLOITATION_PROMPT = """
+You are an elite Bug Bounty Hunter and AI Orchestrator.
+Review all verified findings and generate a final, professional vulnerability summary.
+
+VERIFIED FINDINGS:
+{verified_findings}
+
+For each unique vulnerability, output a structured summary including:
+- Impact Description
+- CVSS v3.1 Severity Estimate (Critical/High/Medium/Low)
+- Exploitability factor
+- Recommended Remediation
+
+Format the output clearly using Markdown headers.
 """
